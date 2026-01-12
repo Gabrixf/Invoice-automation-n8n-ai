@@ -1,0 +1,565 @@
+{
+  "name": "Invoice Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "event": "=messageReceived",
+        "simple": false,
+        "filters": {
+          "q": "has:attachment filename:pdf"
+        },
+        "options": {
+          "dataPropertyAttachmentsPrefixName": "attachment_",
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        224,
+        0
+      ],
+      "id": "2a4afb2e-0165-4d71-97b9-5aec4cdaeb69",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "FLfPQfvziTEMLe1u",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        832,
+        160
+      ],
+      "id": "1a6e443f-43e2-469f-bc0c-9de4a0ffee2f",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "SVS9AP0lNK0P6UhB",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "gmadrigalf101@gmail.com",
+        "subject": "=High-value invoice > $5,000 — {{$json.vendor}} — {{$json.invoice_number}}",
+        "message": "=High-value invoice detected.  Vendor: {{$json.vendor}} Invoice #: {{$json.invoice_number}} Invoice date: {{$json.invoice_date}} Amount: {{$json.amount}} {{$json.currency}} Status: {{$json.status}}  Email from: {{$json.email_from}} Subject: {{$json.email_subject}} Received: {{$json.email_date}}  Logged at: {{$json.timestamp}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1824,
+        96
+      ],
+      "id": "da4df0a8-13ff-4fdf-a5d2-375cfc0093b3",
+      "name": "Send a message",
+      "webhookId": "46393cc2-6c78-4978-809b-7b7acb056854",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "FLfPQfvziTEMLe1u",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItem = $input.item;\nconst binaries = inputItem.binary || {};\nconst email = (inputItem.json && typeof inputItem.json === \"object\") ? inputItem.json : {};\n\nconst outputs = [];\n\nfor (const key of Object.keys(binaries)) {\n  const bin = binaries[key];\n\n  const isPdf =\n    (bin?.mimeType && bin.mimeType.includes(\"pdf\")) ||\n    (bin?.fileName && bin.fileName.toLowerCase().endsWith(\".pdf\"));\n\n  if (!isPdf) continue;\n\n  outputs.push({\n    json: {\n      email_from: email.from || email.sender || null,\n      email_subject: email.subject || null,\n      email_date: email.date || null,\n\n      attachment_key: key,\n      attachment_fileName: bin.fileName || null,\n      attachment_mimeType: bin.mimeType || null,\n      attachment_fileSize: bin.fileSize || null,\n    },\n    binary: {\n      data: bin, \n    },\n  });\n}\n\nreturn outputs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "7c8cb130-6bc8-4d82-9db3-34a4aceda882",
+      "name": "Split PDF Attachments"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "=data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        608,
+        0
+      ],
+      "id": "40939f30-104a-4ef4-9e40-3f4700d665ef",
+      "name": "Extract from PDF"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an invoice parsing system.\n\nYour task is to extract structured data from the invoice text below.\n\nCRITICAL RULES:\n- The field \"total_amount\" MUST represent the FINAL TOTAL payable by the customer.\n- Prefer amounts labeled as:\n  - \"Gross Amount\"\n  - \"Total\"\n  - \"Total Amount\"\n  - \"Amount incl. VAT\"\n  - \"Grand Total\"\n- Ignore:\n  - Line item prices\n  - Unit prices\n  - Subtotals\n  - VAT-only values\n- If multiple totals exist, choose the largest reasonable final amount.\n\nDATE RULES:\n- issue_date is the invoice issue date.\n- due_date is the payment due date, if present.\n\nITEM RULES:\n- Extract line items only if they clearly represent billed services/products.\n- Each item must include: description, quantity, unit_price, line_total.\n- If items are unclear, return an empty array.\n\nOUTPUT FORMAT:\nReturn ONLY a valid JSON object with this exact structure:\n\n{\n  \"vendor_name\": string | null,\n  \"vendor_address\": string | null,\n  \"invoice_number\": string | null,\n  \"receipt_number\": string | null,\n  \"issue_date\": string | null,\n  \"due_date\": string | null,\n  \"total_amount\": number | null,\n  \"currency\": string | null,\n  \"items\": [\n    {\n      \"description\": string,\n      \"quantity\": number | null,\n      \"unit_price\": number | null,\n      \"line_total\": number | null\n    }\n  ]\n}\n\nDo not include explanations or extra text.\n\nINVOICE TEXT:\n{{ $json[\"text\"] }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        800,
+        0
+      ],
+      "id": "a834f69d-36d6-4814-81f2-88ebadfc2275",
+      "name": "LLM Extract Invoice JSON"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nlet raw = $json.text || \"\";\n\n\nconst start = raw.indexOf(\"{\");\nconst end = raw.lastIndexOf(\"}\");\n\n\n\nif (start === -1 || end === -1) {\n  \n  return {\n    status: \"ERROR\",\n    error_message: \"objetc Josnt not found in LLM answer\",\n    raw_llm_text: raw,\n  };\n}\n\n\nconst jsonString = raw.slice(start, end + 1).trim();\n\n\nlet parsed;\ntry {\n  parsed = JSON.parse(jsonString);\n} catch (e) {\n  \n  return {\n    status: \"ERROR\",\n    error_message: \"JSON.parse failed: \" + e.message,\n    raw_llm_text: raw,\n    attempted_json: jsonString,\n  };\n}\n\n\nconst vendor =\n  parsed.vendor_name ||\n  parsed.vendor ||\n  parsed.supplier_name ||\n  null;\n\nconst invoice_number =\n  parsed.invoice_number ||\n  parsed.receipt_number ||\n  parsed.document_number ||\n  null;\n\nconst invoice_date =\n  parsed.invoice_date ||\n  parsed.issue_date ||\n  parsed.date ||\n  parsed.date_paid ||  \n  null;\n\nlet amountRaw =\n  parsed.total_amount ??\n  parsed.amount ??\n  parsed.total ??\n  null;\n\nconst cleaned = (amountRaw ?? \"\")\n  .toString()\n  .replace(/\\s/g, \"\")\n  .replace(/\\./g, \"\")      \n  .replace(/,/g, \".\")      \n  .replace(/[^\\d.]/g, \"\"); \n\nconst amountNum = cleaned ? Number(cleaned) : NaN;\nconst amount = Number.isFinite(amountNum) ? amountNum : null;\n\nconst currency = parsed.currency || parsed.currency_code || null;\n\n\nlet status = \"OK\";\nlet error_message = \"\";\n\nif (!vendor || !invoice_number || !invoice_date || amount === null) {\n  status = \"INCOMPLETE\";\n\n  const missing = [];\n  if (!vendor) missing.push(\"vendor\");\n  if (!invoice_number) missing.push(\"invoice_number\");\n  if (!invoice_date) missing.push(\"invoice_date\");\n  if (amount === null) missing.push(\"amount\");\n\n  error_message = \"Missing fields: \" + missing.join(\", \");\n}\n\nif (\n  amount !== null &&\n  amount < 100 &&\n  Array.isArray(parsed?.items) &&\n  parsed.items.length > 5\n) {\n  status = \"INCOMPLETE\";\n  error_message = \"Parsed amount may be incorrect for multi-page invoice\";\n}\n\nconst flagged = amount !== null && amount > 5000;\n\n\nlet emailInfo = {};\ntry {\nemailInfo = {\n  email_from: $json.email_from ?? null,\n  email_subject: $json.email_subject ?? null,\n  email_date: $json.email_date ?? null,\n  email_threadId: $json.email_threadId ?? null,\n};\n} catch (e) {\n  \n  emailInfo = {};\n}\n\n\nreturn {\n  timestamp: new Date().toISOString(),\n  attachment_fileName: $json.attachment_fileName ?? null,\n\n  vendor,\n  invoice_number,\n  invoice_date,\n  amount,\n  currency,\n  flagged,\n  status,\n  error_message,\n  raw_llm_json: parsed,\n  ...emailInfo,\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "ebff82b2-1e3e-45ad-8558-295620c26970",
+      "name": "Normalize + Validate Fields"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1dQd5aJWrFhfu8HAgbZeVdfK7xmVyDGXez7UruqSRpNI/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Hoja 1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1dQd5aJWrFhfu8HAgbZeVdfK7xmVyDGXez7UruqSRpNI/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{$now}}",
+            "email_from": "={{$json.email_from}}",
+            "email_subject": "={{$json.email_subject}}",
+            "email_date": "={{$json.email_date}}",
+            "email_threadId": "={{$json.email_threadId}}",
+            "vendor": "={{$json.vendor}}",
+            "invoice_number": "={{$json.invoice_number}}",
+            "invoice_date": "={{$json.invoice_date}}",
+            "amount": "={{$json.amount}}",
+            "currency": "={{$json.currency}}",
+            "flagged": "={{$json.flagged}}",
+            "status": "={{$json.status}}",
+            "error_message": "={{$json.error_message}}",
+            "raw_llm_json": "={{ JSON.stringify($json.raw_llm_json) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_from",
+              "displayName": "email_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_subject",
+              "displayName": "email_subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_date",
+              "displayName": "email_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_threadId",
+              "displayName": "email_threadId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vendor",
+              "displayName": "vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "invoice_date",
+              "displayName": "invoice_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "amount",
+              "displayName": "amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "flagged",
+              "displayName": "flagged",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "raw_llm_json",
+              "displayName": "raw_llm_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1280,
+        0
+      ],
+      "id": "5f15acb2-0eb8-448e-9b5c-b6e21c377334",
+      "name": "Log to Google Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZvuZgysreiTMSYnt",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "15641ba5-37ee-4ed5-b3c7-550a90da1e4a",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ERROR",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1472,
+        0
+      ],
+      "id": "c40307fe-b9ac-43de-8a26-c4ed158e35dc",
+      "name": "Is Error/Incomplete"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0d494da6-66df-46c1-ab85-cf2726f5c277",
+              "leftValue": "={{ $json.amount || 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1616,
+        224
+      ],
+      "id": "d975e81b-d2f0-48a3-81c7-7ba6bc89ec84",
+      "name": "Is High-Value (>5000)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "{{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"Invoice flagged \\nVendor: {{$json.vendor}}\\nInvoice #: {{$json.invoice_number}}\\nAmount: {{$json.amount}} {{$json.currency}}\\nDate: {{$json.invoice_date}}\\nStatus: {{$json.status}}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2032,
+        96
+      ],
+      "id": "8392bfd1-2648-4e85-9c62-d18e6f391e85",
+      "name": "Slack Alert"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Split PDF Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM Extract Invoice JSON",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split PDF Attachments": {
+      "main": [
+        [
+          {
+            "node": "Extract from PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from PDF": {
+      "main": [
+        [
+          {
+            "node": "LLM Extract Invoice JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Extract Invoice JSON": {
+      "main": [
+        [
+          {
+            "node": "Normalize + Validate Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize + Validate Fields": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Is Error/Incomplete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Error/Incomplete": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Is High-Value (>5000)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is High-Value (>5000)": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Slack Alert": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ae626e62-e8e2-4419-b1a7-5ac937497f2b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0b14640bb13347200e27d4e57759165bd51f3e07363cb9daf5e9568d75eee15d"
+  },
+  "id": "tes4mms3KQM4Te1d",
+  "tags": []
+}
